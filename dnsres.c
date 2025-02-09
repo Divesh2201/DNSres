@@ -5,6 +5,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <poll.h>
+#include <errno.h>
 
 struct dns_header {
     uint16_t tx_id;
@@ -138,12 +140,63 @@ int main(int argc, char *argv[]) {
     dns_server_addr_in.sin_port = htons(53);
     int num_root_servers = sizeof root_servers / sizeof *root_servers;
     for(int i = 0; i < num_root_servers; i++) {
+        printf("For i = %d\n", i);
         inet_aton(root_servers[i].ipv4, &dns_server_addr_in.sin_addr);
         // sendto does NOT establish connection (suitable for UDP)
         // if it were TCP we REQUIRE already established connection
+        printf("Sending DNS Query to dns server address %d\n", dns_server_addr_in.sin_addr.s_addr);
         if (sendto(udp_socket_fd, dns_query, dns_query_len, 0, (struct sockaddr *)&dns_server_addr_in, sizeof(dns_server_addr_in)) < 0) {
             continue;
         }
+        struct pollfd poll_fd;
+        poll_fd.fd = udp_socket_fd;
+        poll_fd.events = POLLIN;
+        poll_fd.revents = 0;
+
+        int timeout_in_ms = 2000;
+        int ready = poll(&poll_fd, 1, timeout_in_ms);
+
+        if(ready < 0) {
+            if(errno == EINTR) {
+                printf("Poll interrupted by signal\n");
+            } else if(errno == ENOMEM) {
+                perror("Out of memory\n");
+            } else if(errno == EINVAL) {
+                perror("Invalid argument to poll\n");
+            } else {
+                perror("Poll failed for some unknown error\n");
+            }
+        } else if(ready == 0) {
+            // poll timed out, try the next root server
+            continue;
+        } else {
+            // we have got something in revents
+            printf("Successfully polled something in our udp socket fd.\n");
+            if(poll_fd.revents & POLLIN) {
+                // we are ready to read the information returned from the root server
+                // send() and recv() go together for connected sockets
+                // sendto() and recvfrom() go together
+                struct sockaddr_in recv_dns_server_addr;
+                char recv_buff[512];
+                ssize_t recv_dns_server_addr_len = sizeof(recv_dns_server_addr);
+                ssize_t recv_bytes_len = recvfrom(udp_socket_fd, recv_buff, sizeof(recv_buff), 0, (struct sockaddr *) &recv_dns_server_addr, (socklen_t *) &recv_dns_server_addr_len);
+                if(recv_bytes_len < 0) {
+                    perror("Recvfrom() failed!\n");
+                } else if(recv_bytes_len == 0) {
+                    printf("The source address %d did an orderly shutdown for recvfrom()\n", dns_server_addr_in.sin_addr.s_addr);
+                } else {
+                    printf("SUCCESS! Received DNS response from Root server %d, for %ld bytes\n", recv_dns_server_addr.sin_addr.s_addr, recv_bytes_len);
+                    for(int i = 0; i < recv_bytes_len; i++) {
+                        printf("%d ", recv_buff[i]);
+                    }
+                    printf("\n");
+                }
+            } else {
+                printf("Received Revents bitmask %d from poll which is not POLLIN\n", poll_fd.revents);
+            }
+            break;
+        }
+
     }
     free(dnsres_servers);
     free(dns_query_header);
