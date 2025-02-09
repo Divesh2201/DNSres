@@ -3,7 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/socket.h>
-
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 struct dns_header {
     uint16_t tx_id;
@@ -13,7 +14,27 @@ struct dns_header {
     uint16_t num_authorities;
     uint16_t num_additional;
 }; // 12 byte header
-// _apple3com3net_
+
+struct root_server {
+    char hostname[48];
+    char ipv4[16];
+};
+
+struct root_server root_servers[13] = {
+    {"a.root-servers.net", "198.41.0.4"},	// Verisign, Inc.
+    {"b.root-servers.net", "170.247.170.2"}, //	University of Southern California, Information Sciences Institute
+    {"c.root-servers.net", "192.33.4.12"}, // Cogent Communications
+    {"d.root-servers.net", "199.7.91.13"}, // University of Maryland
+    {"e.root-servers.net", "192.203.230.10"}, // NASA (Ames Research Center)
+    {"f.root-servers.net", "192.5.5.241"}, // Internet Systems Consortium, Inc.
+    {"g.root-servers.net", "192.112.36.4"}, // US Department of Defense (NIC)
+    {"h.root-servers.net", "198.97.190.53"}, // US Army (Research Lab)
+    {"i.root-servers.net", "192.36.148.17"}, // Netnod
+    {"j.root-servers.net", "192.58.128.30"}, // Verisign, Inc.
+    {"k.root-servers.net", "193.0.14.129"}, // RIPE NCC
+    {"l.root-servers.net", "199.7.83.42"}, // ICANN
+    {"m.root-servers.net", "202.12.27.33"}, // WIDE Project
+};
 
 // dns_query_header (12) - encoded domain name (variable bytes) - QTYPE (2) - QCLASS (2)
 
@@ -74,11 +95,6 @@ int main(int argc, char *argv[]) {
             domain_name = argv[i]; 
         }
     }
-    // dnsres_server_i = dnsres_servers;
-    // while(*dnsres_server_i != NULL) {
-    //     printf("Lookup DNS Resolver %s\n", *dnsres_server_i);
-    //     dnsres_server_i++;
-    // }
     printf("The domain name is %s\n", domain_name);
     printf("The type is %s\n", qtype);
 
@@ -93,6 +109,7 @@ int main(int argc, char *argv[]) {
     dns_encode_domain(domain_name, encoded_domain);
     // print_encoded_domain(encoded_domain, encoded_domain_len);
     char dns_query[512];
+    memset(dns_query, 0, sizeof(dns_query));
     int dns_query_len = 0;
 
     struct dns_header *dns_query_header = (struct dns_header*) malloc(sizeof(struct dns_header));
@@ -116,6 +133,19 @@ int main(int argc, char *argv[]) {
     memcpy(dns_query + dns_query_len, &encoded_qclass, sizeof(encoded_qclass));
     dns_query_len += sizeof(encoded_qclass);
 
-    // sendto(sockfd, query, query_len, 0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    struct sockaddr_in dns_server_addr_in;
+    dns_server_addr_in.sin_family = AF_INET;
+    dns_server_addr_in.sin_port = htons(53);
+    int num_root_servers = sizeof root_servers / sizeof *root_servers;
+    for(int i = 0; i < num_root_servers; i++) {
+        inet_aton(root_servers[i].ipv4, &dns_server_addr_in.sin_addr);
+        // sendto does NOT establish connection (suitable for UDP)
+        // if it were TCP we REQUIRE already established connection
+        if (sendto(udp_socket_fd, dns_query, dns_query_len, 0, (struct sockaddr *)&dns_server_addr_in, sizeof(dns_server_addr_in)) < 0) {
+            continue;
+        }
+    }
+    free(dnsres_servers);
+    free(dns_query_header);
     return 0;
 }
