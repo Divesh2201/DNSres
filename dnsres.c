@@ -51,7 +51,7 @@ void dns_encode_domain(char *domain_name, char *encoded_domain) {
     encoded_domain++;
     while(*domain_name != '\0') {
         if(*domain_name == '.') {
-            *(encoded_domain-part_len-1) = part_len+'0';
+            *(encoded_domain-part_len-1) = (char) part_len;
             part_len = 0;
         } else {
             part_len++;
@@ -122,7 +122,7 @@ int main(int argc, char *argv[]) {
     dns_query_header->num_additional = htons(0);
     dns_query_header->num_authorities = htons(0);
     memcpy(dns_query, dns_query_header, sizeof(*dns_query_header));
-    dns_query_len += sizeof(dns_query_header);
+    dns_query_len += sizeof(*dns_query_header);
 
     memcpy(dns_query + dns_query_len, encoded_domain, encoded_domain_len);
     dns_query_len += encoded_domain_len;
@@ -145,6 +145,10 @@ int main(int argc, char *argv[]) {
         // sendto does NOT establish connection (suitable for UDP)
         // if it were TCP we REQUIRE already established connection
         printf("Sending DNS Query to dns server address %d\n", dns_server_addr_in.sin_addr.s_addr);
+        for(int i = 0; i < dns_query_len; i++) {
+            printf("%d ", dns_query[i]);
+        }
+        printf("\n");
         if (sendto(udp_socket_fd, dns_query, dns_query_len, 0, (struct sockaddr *)&dns_server_addr_in, sizeof(dns_server_addr_in)) < 0) {
             continue;
         }
@@ -168,6 +172,7 @@ int main(int argc, char *argv[]) {
             }
         } else if(ready == 0) {
             // poll timed out, try the next root server
+            printf("Poll timed out, trying next root server\n");
             continue;
         } else {
             // we have got something in revents
